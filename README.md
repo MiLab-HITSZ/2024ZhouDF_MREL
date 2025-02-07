@@ -2,7 +2,7 @@
 
 1. **模型存储位置**：
    - 在服务器上，各种类型的后门模型已经提前训练好，存储路径为：`/projects/FreeEagle/backdoor_attack_simulation/saved_models`。
-   - 本项目在GitHub上提供了部分模型，路径为：`backdoor_attack_simulation/saved_models/cifar10_models`。
+   - GitHub上模型和数据集难以上传，演示时请将服务器`/projects/FreeEagle/backdoor_attack_simulation`文件夹带上。
 
 2. **主要运行代码**：
    - 运行代码为 `mydata_free.py`，用户可以自行修改参数。
