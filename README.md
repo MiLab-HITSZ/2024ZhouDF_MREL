@@ -1,6 +1,6 @@
 # 后门模型信息
 
-1. **模型存储位置**：
+1. **模型和数据集存储位置**：
    - 在服务器上，各种类型的后门模型已经提前训练好，存储路径为：`/projects/FreeEagle/backdoor_attack_simulation/saved_models`。
    - GitHub上模型和数据集难以上传，演示时请将服务器`/projects/FreeEagle/backdoor_attack_simulation`文件夹带上。
 
