@@ -17,7 +17,6 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MultipleLocator
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 from networks import partial_models_adaptive
 from networks.resnet import ResNet
@@ -34,10 +33,9 @@ from networks.BadEncoderOriginalModels import bad_encoder_full_model_partial
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
-    parser.add_argument('--gpu_index', type=str, default='4')
-
+    parser.add_argument('--gpu_index', type=str, default='0')
     # model dataset
-    parser.add_argument('--model', type=str, default='simple_cnn',
+    parser.add_argument('--model', type=str, default='vgg16',
                         choices=['resnet50', 'resnet18',
                                  'vgg16',
                                  'google_net',
@@ -46,19 +44,18 @@ def parse_option():
                                  ])
     parser.add_argument('--n_cls', type=int, default=10,
                         help='number of classes')
-    parser.add_argument('--size', type=int, default=28,
+    parser.add_argument('--size', type=int, default=32,
                         help='size of the input image')
     parser.add_argument('--inspect_layer_position', type=int, default=None,  # default=2
                         help='which part as the partial model')
-
     # model to be detected
     parser.add_argument('--ckpt', type=str,
                         default=
-                        f'/home/zq/projects/FreeEagle/backdoor_attack_simulation/saved_models/poisoned_mnist_models/'
-                        f'poisoned_mnist_simple_cnn_class-agnostic_targeted=9_patched_img-trigger/last.pth',
+                        f'/home/zq/projects/FreeEagle/backdoor_attack_simulation/saved_models/poisoned_cifar10_models/patched/'
+                        f'poisoned_cifar10_vgg16_class-agnostic_targeted=1_patched_img-trigger/last.pth',
                         help='path to pre-trained model')
 
-    parser.add_argument('--num_important_neurons', type=int, default=5)
+    parser.add_argument('--num_important_neurons', type=int, default=50,help='vgg16:50; googlenet:20')
     parser.add_argument('--num_dummy', type=int, default=1)
     parser.add_argument('--metric', type=str, default='softmax_score', choices=['logit', 'softmax_score'])
 
@@ -75,17 +72,16 @@ def parse_option():
 
 def set_default_settings(opt):
     opt.num_dummy = 1
-    # set opt.in_dims according to the size of the input image
-    if opt.size == 32:
-        opt.in_dims = 512
-    elif opt.size == 64:
-        opt.in_dims = 2048
-    elif opt.size == 224:
-        opt.in_dims = 2048
-    elif opt.size == 28:
-        pass
-    else:
-        raise ValueError
+    # if opt.size == 32:
+    #     opt.in_dims = 512
+    # elif opt.size == 64:
+    #     opt.in_dims = 2048
+    # elif opt.size == 224:
+    #     opt.in_dims = 2048
+    # elif opt.size == 28:
+    #     pass
+    # else:
+    #     raise ValueError
 
     # set default inspected layer position
     if opt.inspect_layer_position is None:
@@ -118,7 +114,7 @@ def load_model(opt):
     print(f'opt.inspect_layer_position:{opt.inspect_layer_position}')
     if 'face' in opt.model:
         net = partial_models_adaptive.FaceAdaptivePartialModel(
-            num_classes=opt.n_cls,  # in_dims=opt.in_dims,
+            num_classes=opt.n_cls,
             inspect_layer_position=opt.inspect_layer_position,
             original_input_img_shape=(1, 3, opt.size, opt.size)
         )
@@ -147,7 +143,7 @@ def load_model(opt):
         )
     elif 'vgg16' in opt.model:
         model_classifier = partial_models_adaptive.VGGAdaptivePartialModel(
-            num_classes=opt.n_cls,  # in_dims=opt.in_dims,
+            num_classes=opt.n_cls,
             inspect_layer_position=opt.inspect_layer_position,
             original_input_img_shape=(1, 3, opt.size, opt.size)
         )
@@ -190,7 +186,7 @@ def load_model(opt):
                 state_dict = ckpt['net_state_dict']
             except KeyError:
                 try:
-                    print("wow! it is dict model")
+                    print("it is dict model")
                     state_dict = ckpt['model']
                 except KeyError:
                     state_dict = ckpt['state_dict']
@@ -198,8 +194,6 @@ def load_model(opt):
             model_classifier = ckpt
 
     if torch.cuda.is_available():
-        # if torch.cuda.device_count() > 1:
-        #     model_classifier = torch.nn.DataParallel(model_classifier)
         model_classifier = model_classifier.cuda()
         cudnn.benchmark = True
         if 'Troj' not in opt.ckpt and 'bad_encoder_full_model' not in opt.model:
@@ -277,11 +271,10 @@ def optimize_inner_embedding(opt, model_classifier_part, inner_embedding_tensor_
     sort_obj = torch.sort(dummy_inner_embedding_tensor.reshape(-1), descending=True)
     max_indices = sort_obj.indices.cpu().numpy()
     collected_max_indices = max_indices[:50]
-
-
     # #以下是新增的处理
     _dummy_inner_embedding = torch.rand_like(inner_embedding_tensor_template)
     ori_size = dummy_inner_embedding_tensor.shape
+    #计算出元素的重要性并排序
     sort_obj = torch.sort(dummy_inner_embedding_tensor.reshape(-1) * weight[layer_name][desired_class], descending=True)
     max_indices = sort_obj.indices.cpu().numpy()
     collected_max_indices = max_indices[:num_activation]
@@ -298,6 +291,7 @@ def optimize_inner_embedding(opt, model_classifier_part, inner_embedding_tensor_
     optimizer_adversarial = torch.optim.Adam([_dummy_inner_embedding], lr=1e-2,
                                                      weight_decay=0.005)  # scale of L2 norm
     mask_factor=torch.ones_like(dummy_inner_embedding_tensor.reshape(-1))
+    #选定置0的元素
     for ei in collected_max_indices:
         mask_factor[ei] = 0
     mask_factor=mask_factor.reshape(ori_size)
@@ -348,20 +342,14 @@ def observe_important_neurons_for_one_class(opt, model_classifier_part,num_ac,so
     if torch.cuda.is_available():
         inner_embedding_template_tensor = inner_embedding_template_tensor.cuda()
     model_classifier_part = model_classifier_part.eval()
-
     # observe the active neurons of the optimized dummy input
     _dummy_inner_embedding = optimize_inner_embedding(opt, model_classifier_part, inner_embedding_template_tensor,
                                                       num_activation=num_ac,desired_class= source_class)
-
     # collect important neuron ids
     sort_obj = torch.sort(_dummy_inner_embedding.reshape(-1), descending=True)
-    max_values = sort_obj.values.cpu().numpy()
     max_indices = sort_obj.indices.cpu().numpy()
     non_minor_id = opt.num_important_neurons
     collected_max_indices = max_indices[:non_minor_id]
-    #排序一下，选择了前几个重要的激活对应的Indices
-    #print(desired_class)
-    # print(collected_max_indices)
     return _dummy_inner_embedding, collected_max_indices
 
 
@@ -388,14 +376,11 @@ def compute_metrics_for_array(anomaly_metric_value_array):
 
 def compute_dummy_inner_embeddings(model_classifier, opt,num_ac):
     np.set_printoptions(precision=2, suppress=True)
-   # dummy_inner_embeddings_all = [[] for i in range(opt.n_cls)]
     dummy_inner_embeddings_all = []
-    max_ids_all = [set({}) for i in range(opt.n_cls)]
     print("\nStart generating and recording dummy inner embeddings for each class......")
     for i in range(opt.n_cls):
         _dummy_inner_embedding, max_ids = observe_important_neurons_for_one_class(opt, model_classifier, num_ac,i)
         dummy_inner_embeddings_all.append(_dummy_inner_embedding)
-    # 对于每个类，对生成num_dummy=1次，每次都是repre
     return dummy_inner_embeddings_all
 
 
@@ -403,7 +388,6 @@ def inspect_saved_model(opt):
     # build partial model
     model_classifier = load_model(opt)
     model_classifier = model_classifier.eval()
-
     # #以下是特征融合
     # dummy_inner_embeddings_all=compute_dummy_inner_embeddings(model_classifier, opt, num_ac=0)
     # t = []
@@ -426,14 +410,15 @@ def inspect_saved_model(opt):
     for k in range(opt.n_cls):
         logits.append([])
 
-    num_acs = range(0,3200,50)
+    num_acs = range(0,3200,opt.num_important_neurons)
     for i in num_acs:
+        #对于每个类，返回每轮的置0后的特征
         dummy_inner_embeddings_all = compute_dummy_inner_embeddings(model_classifier, opt, num_ac= i)
-
+        #记录logits
         for source_class in range(opt.n_cls):
             logits[source_class].append(compute_metrics_one_source(opt, model_classifier, source_class,
                                                            dummy_inner_embeddings_all))
-    newfolder = 'mnist_patched_9'
+    newfolder = 'datafree'
     os.mkdir(newfolder)
     new_folder_path = os.path.abspath(newfolder)
     for cl in range(opt.n_cls):
@@ -475,8 +460,6 @@ def inspect_saved_model(opt):
         # plt.savefig("fea_poil.jpg")
         # plt.show()
         # plt.close()
-
-
 
 if __name__ == '__main__':
     opt = parse_option()
