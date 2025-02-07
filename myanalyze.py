@@ -92,5 +92,3 @@ for  folder_path in subdirectories:
         print(folder_path)
     print("-----------------------------------------")
 print("sum:", len(subdirectories),"correct:", correct)
-
-
